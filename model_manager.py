@@ -133,17 +133,24 @@ class LlamaCppWrapper(BaseModelWrapper):
             logger.info(f"Loading llama.cpp model from {self.config.path}")
             start_time = time.time()
             
-            self.model = Llama(
-                model_path=self.config.path,
-                n_ctx=self.config.n_ctx,
-                n_batch=self.config.n_batch,
-                n_threads=self.config.n_threads,
-                n_gpu_layers=self.config.n_gpu_layers,
-                use_mmap=self.config.use_mmap,
-                use_mlock=self.config.use_mlock,
-                verbose=False,  # Use a default value
-                embedding=self.config.embedding_mode,  # Enable embedding mode if configured
-            )
+            # For embedding models, we need to set n_ubatch to handle input tokens
+            init_params = {
+                "model_path": self.config.path,
+                "n_ctx": self.config.n_ctx,
+                "n_batch": self.config.n_batch,
+                "n_threads": self.config.n_threads,
+                "n_gpu_layers": self.config.n_gpu_layers,
+                "use_mmap": self.config.use_mmap,
+                "use_mlock": self.config.use_mlock,
+                "verbose": False,  # Use a default value
+                "embedding": self.config.embedding_mode,  # Enable embedding mode if configured
+            }
+            
+            # Set n_ubatch for embedding models to match n_ctx
+            if self.config.embedding_mode:
+                init_params["n_ubatch"] = self.config.n_ctx
+            
+            self.model = Llama(**init_params)
             
             load_time = time.time() - start_time
             logger.info(f"Loaded {self.config.tier.value} model in {load_time:.2f}s")
