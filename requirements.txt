@@ -1,0 +1,25 @@
+# Core dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+aiofiles>=23.2.1
+
+
+# LLM backends
+llama-cpp-python>=0.2.50  # For llama.cpp models
+# Uncomment if using MLX models:
+mlx>=0.26.2
+mlx-lm>=0.25.3
+
+
+# Optional dependencies for enhanced functionality
+# httpx>=0.25.0  # For async HTTP client
+# redis>=5.0.0  # For distributed caching
+# numpy>=1.24.0  # For embeddings/semantic cache
+
+# Development dependencies (optional)
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+# black>=23.0.0
+# ruff>=0.1.0

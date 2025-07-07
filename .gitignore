@@ -1,0 +1,22 @@
+.env
+.CLAUDE.md
+.port
+.venv
+
+# Python
+__pycache__/
+*.py[cod]
+.cache/
+
+# Model files (large)
+*.gguf
+*.mlx
+*.bin
+*.safetensors
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

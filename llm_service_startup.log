@@ -1,0 +1,11 @@
+Activating virtual environment...
+Starting LLM Service...
+Service will be available at http://localhost:8000
+API docs available at http://localhost:8000/docs
+
+Press Ctrl+C to stop the service
+
+Traceback (most recent call last):
+  File "/Users/patrickpark/Documents/Work/utils/llmservice/server.py", line 186, in <module>
+    from .model_manager import ModelManager, ModelConfig, ModelTier
+ImportError: attempted relative import with no known parent package
