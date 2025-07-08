@@ -259,14 +259,34 @@ class MLXWrapper(BaseModelWrapper):
             load_time = time.time() - start_time
             logger.info(f"Loaded {self.config.tier.value} MLX model in {load_time:.2f}s")
             
-            # Create a wrapper for generate that filters out problematic parameters
+            # Create a wrapper for generate that properly handles parameters
             def generate_wrapper(model, tokenizer, prompt, **kwargs):
                 from mlx_lm import generate
-                # Only pass supported parameters
+                from mlx_lm.sample_utils import make_sampler
+                
+                # Extract sampling parameters
+                temp = kwargs.get('temperature', kwargs.get('temp', 0.7))
+                top_p = kwargs.get('top_p', 0.95)
+                top_k = kwargs.get('top_k', 0)
+                
+                # Create sampler with the parameters
+                sampler = make_sampler(
+                    temp=temp,
+                    top_p=top_p,
+                    top_k=top_k
+                )
+                
+                # Pass supported parameters to generate
                 supported_kwargs = {
                     'max_tokens': kwargs.get('max_tokens', 256),
                     'verbose': kwargs.get('verbose', False),
+                    'sampler': sampler,
                 }
+                
+                # Handle repetition_penalty if provided
+                if 'repetition_penalty' in kwargs:
+                    supported_kwargs['repetition_penalty'] = kwargs['repetition_penalty']
+                
                 return generate(model, tokenizer, prompt, **supported_kwargs)
             
             # Store MLX functions
@@ -305,14 +325,16 @@ class MLXWrapper(BaseModelWrapper):
         def _generate():
             start_time = time.time()
             
-            # Generate text with only supported parameters
-            # Note: MLX generate function has issues with parameter passing
-            # Only pass parameters that are explicitly supported
+            # Generate text - the wrapper will handle parameter conversion
             response = self._generate(
                 self.model,
                 self.tokenizer,
                 prompt=prompt,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
                 max_tokens=max_tokens,
+                repetition_penalty=repetition_penalty,
                 verbose=False,
             )
             

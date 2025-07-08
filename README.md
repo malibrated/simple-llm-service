@@ -15,7 +15,6 @@ A lightweight, performant REST API service for Large Language Models with OpenAI
 - **Structured Output**: Support for JSON grammars and structured generation
 - **Async Architecture**: High-performance async request handling
 
-> **⚠️ MLX Compatibility Notice**: Due to a parameter passing issue in MLX-LM v0.25.3, temperature and sampling parameters are not supported for MLX models. We recommend using llama.cpp models until this is resolved. See [Known Issues](#known-issues) for details.
 
 ## Installation
 
@@ -267,15 +266,15 @@ LOG_LEVEL=DEBUG
 
 ## Known Issues
 
-### MLX Parameter Compatibility (mlx-lm v0.25.3)
+### MLX Parameter Handling (Resolved)
 
-There is currently an issue with MLX-LM where the `generate` function passes unsupported parameters to internal functions, causing a `TypeError: generate_step() got an unexpected keyword argument 'temp'` error. 
+MLX-LM requires temperature and sampling parameters to be passed via a sampler object rather than as direct parameters. This has been fixed in our implementation.
 
-**Impact**: Temperature, top_p, and other sampling parameters are ignored for MLX models.
+**Previous Issue**: MLX would throw `TypeError: generate_step() got an unexpected keyword argument 'temp'` when using temperature parameters.
 
-**Workaround**: Use llama.cpp models instead of MLX models for full parameter support.
+**Resolution**: We now properly create a sampler using `mlx_lm.sample_utils.make_sampler()` with the provided temperature, top_p, and top_k parameters.
 
-**Status**: We've implemented a workaround that allows MLX models to function, but without sampling parameter support. An issue has been reported to the MLX-LM developers.
+**Current Status**: MLX models now fully support temperature and sampling parameters.
 
 ## License
 

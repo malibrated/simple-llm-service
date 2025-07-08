@@ -1,4 +1,6 @@
-# MLX-LM Issue: generate_step() receives unexpected 'temp' parameter
+# MLX-LM Issue: generate_step() receives unexpected 'temp' parameter (RESOLVED)
+
+**Update**: This issue has been resolved. The MLX developers clarified that temperature parameters should be passed via a sampler object created with `make_sampler()`, not as direct parameters to `generate()`.
 
 ## Summary
 When using `mlx_lm.generate()` with custom parameters, it raises a `TypeError: generate_step() got an unexpected keyword argument 'temp'`. This occurs even when not explicitly passing any temperature-related parameters.
@@ -102,7 +104,28 @@ def generate_wrapper(model, tokenizer, prompt, **kwargs):
 
 This workaround prevents the error but also means we cannot use temperature or other sampling parameters.
 
-## Additional Notes
-- The error message mentions 'temp', but I couldn't find where this parameter is being injected
-- This issue makes MLX models incompatible with OpenAI-style APIs that expect temperature control
-- The issue exists in the latest version (0.25.3) as of January 2025
+## Resolution
+
+The correct way to use temperature and sampling parameters with MLX is:
+
+```python
+from mlx_lm import load, generate
+from mlx_lm.sample_utils import make_sampler
+
+model, tokenizer = load("path/to/model")
+
+# Create a sampler with desired parameters
+sampler = make_sampler(temp=0.7, top_p=0.95, top_k=40)
+
+# Pass the sampler to generate
+result = generate(
+    model,
+    tokenizer,
+    prompt="Hello world",
+    max_tokens=100,
+    sampler=sampler,
+    verbose=False
+)
+```
+
+This approach properly handles temperature and other sampling parameters without causing the error.
