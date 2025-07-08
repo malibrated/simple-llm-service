@@ -25,9 +25,18 @@ import uvicorn
 # Load environment variables
 load_dotenv()
 
+# Helper to parse env vars with inline comments
+def _parse_env(key: str, default: str = "") -> str:
+    """Parse environment variable, stripping inline comments."""
+    value = os.getenv(key, default)
+    if '#' in value:
+        # Strip inline comments
+        value = value.split('#')[0].strip()
+    return value
+
 # Configure logging
 logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
+    level=_parse_env("LOG_LEVEL", "INFO"),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -192,9 +201,9 @@ class LLMService:
     
     def __init__(self):
         self.model_manager = ModelManager()
-        self.cache = ResponseCache(enabled=os.getenv("ENABLE_CACHE", "true").lower() == "true")
+        self.cache = ResponseCache(enabled=_parse_env("ENABLE_CACHE", "true").lower() == "true")
         self.last_activity = time.time()
-        self.shutdown_timeout = int(os.getenv("SHUTDOWN_TIMEOUT", "600"))  # 10 minutes default
+        self.shutdown_timeout = int(_parse_env("SHUTDOWN_TIMEOUT", "600"))  # 10 minutes default
         self._shutdown_task: Optional[asyncio.Task] = None
         
     async def startup(self):
@@ -689,13 +698,13 @@ async def legacy_completions(request: CompletionRequest):
 
 if __name__ == "__main__":
     # Run with uvicorn
-    port = int(os.getenv("PORT", "8000"))
-    host = os.getenv("HOST", "0.0.0.0")
+    port = int(_parse_env("PORT", "8000"))
+    host = _parse_env("HOST", "0.0.0.0")
     
     uvicorn.run(
         "server:app",
         host=host,
         port=port,
-        reload=os.getenv("RELOAD", "false").lower() == "true",
-        log_level=os.getenv("LOG_LEVEL", "info").lower()
+        reload=_parse_env("RELOAD", "false").lower() == "true",
+        log_level=_parse_env("LOG_LEVEL", "info").lower()
     )

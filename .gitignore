@@ -2,6 +2,7 @@
 .CLAUDE.md
 .port
 .venv
+.claude
 
 # Python
 __pycache__/
