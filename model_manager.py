@@ -262,7 +262,7 @@ class MLXWrapper(BaseModelWrapper):
             # Create a wrapper for generate that properly handles parameters
             def generate_wrapper(model, tokenizer, prompt, **kwargs):
                 from mlx_lm import generate
-                from mlx_lm.sample_utils import make_sampler
+                from mlx_lm.sample_utils import make_sampler, make_logits_processors
                 
                 # Extract sampling parameters
                 temp = kwargs.get('temperature', kwargs.get('temp', 0.7))
@@ -276,16 +276,21 @@ class MLXWrapper(BaseModelWrapper):
                     top_k=top_k
                 )
                 
-                # Pass supported parameters to generate
+                # Build supported kwargs for generate
                 supported_kwargs = {
                     'max_tokens': kwargs.get('max_tokens', 256),
                     'verbose': kwargs.get('verbose', False),
                     'sampler': sampler,
                 }
                 
-                # Handle repetition_penalty if provided
-                if 'repetition_penalty' in kwargs:
-                    supported_kwargs['repetition_penalty'] = kwargs['repetition_penalty']
+                # Handle repetition_penalty through logits_processors
+                repetition_penalty = kwargs.get('repetition_penalty', kwargs.get('repeat_penalty', 1.0))
+                if repetition_penalty != 1.0:
+                    logits_processors = make_logits_processors(
+                        repetition_penalty=repetition_penalty,
+                        repetition_context_size=20
+                    )
+                    supported_kwargs['logits_processors'] = logits_processors
                 
                 return generate(model, tokenizer, prompt, **supported_kwargs)
             
@@ -313,6 +318,7 @@ class MLXWrapper(BaseModelWrapper):
         # Extract parameters
         temperature = kwargs.get("temperature", self.config.temperature)
         top_p = kwargs.get("top_p", self.config.top_p)
+        top_k = kwargs.get("top_k", self.config.top_k)
         max_tokens = kwargs.get("max_tokens", self.config.max_tokens)
         repetition_penalty = kwargs.get("repeat_penalty", self.config.repeat_penalty)
         
@@ -329,7 +335,7 @@ class MLXWrapper(BaseModelWrapper):
             response = self._generate(
                 self.model,
                 self.tokenizer,
-                prompt=prompt,
+                prompt,
                 temperature=temperature,
                 top_p=top_p,
                 top_k=top_k,
