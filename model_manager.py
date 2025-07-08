@@ -248,7 +248,7 @@ class MLXWrapper(BaseModelWrapper):
         try:
             import mlx
             import mlx.core as mx
-            from mlx_lm import load, generate
+            from mlx_lm import load
             
             logger.info(f"Loading MLX model from {self.config.path}")
             start_time = time.time()
@@ -259,8 +259,18 @@ class MLXWrapper(BaseModelWrapper):
             load_time = time.time() - start_time
             logger.info(f"Loaded {self.config.tier.value} MLX model in {load_time:.2f}s")
             
+            # Create a wrapper for generate that filters out problematic parameters
+            def generate_wrapper(model, tokenizer, prompt, **kwargs):
+                from mlx_lm import generate
+                # Only pass supported parameters
+                supported_kwargs = {
+                    'max_tokens': kwargs.get('max_tokens', 256),
+                    'verbose': kwargs.get('verbose', False),
+                }
+                return generate(model, tokenizer, prompt, **supported_kwargs)
+            
             # Store MLX functions
-            self._generate = generate
+            self._generate = generate_wrapper
             self._mx = mx
             
             # Create embedder/reranker if this is an embedding or reranker model
@@ -295,34 +305,16 @@ class MLXWrapper(BaseModelWrapper):
         def _generate():
             start_time = time.time()
             
-            # Generate text
-            try:
-                # Try with 'temperature' parameter (newer versions)
-                response = self._generate(
-                    self.model,
-                    self.tokenizer,
-                    prompt=prompt,
-                    temperature=temperature,
-                    top_p=top_p,
-                    max_tokens=max_tokens,
-                    repetition_penalty=repetition_penalty,
-                    verbose=False,
-                )
-            except TypeError as e:
-                if "'temp'" in str(e):
-                    # Fallback to 'temp' parameter (older versions)
-                    response = self._generate(
-                        self.model,
-                        self.tokenizer,
-                        prompt=prompt,
-                        temp=temperature,
-                        top_p=top_p,
-                        max_tokens=max_tokens,
-                        repetition_penalty=repetition_penalty,
-                        verbose=False,
-                    )
-                else:
-                    raise
+            # Generate text with only supported parameters
+            # Note: MLX generate function has issues with parameter passing
+            # Only pass parameters that are explicitly supported
+            response = self._generate(
+                self.model,
+                self.tokenizer,
+                prompt=prompt,
+                max_tokens=max_tokens,
+                verbose=False,
+            )
             
             generation_time = time.time() - start_time
             
