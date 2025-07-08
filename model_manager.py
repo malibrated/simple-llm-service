@@ -296,16 +296,33 @@ class MLXWrapper(BaseModelWrapper):
             start_time = time.time()
             
             # Generate text
-            response = self._generate(
-                self.model,
-                self.tokenizer,
-                prompt=prompt,
-                temp=temperature,
-                top_p=top_p,
-                max_tokens=max_tokens,
-                repetition_penalty=repetition_penalty,
-                verbose=False,
-            )
+            try:
+                # Try with 'temperature' parameter (newer versions)
+                response = self._generate(
+                    self.model,
+                    self.tokenizer,
+                    prompt=prompt,
+                    temperature=temperature,
+                    top_p=top_p,
+                    max_tokens=max_tokens,
+                    repetition_penalty=repetition_penalty,
+                    verbose=False,
+                )
+            except TypeError as e:
+                if "'temp'" in str(e):
+                    # Fallback to 'temp' parameter (older versions)
+                    response = self._generate(
+                        self.model,
+                        self.tokenizer,
+                        prompt=prompt,
+                        temp=temperature,
+                        top_p=top_p,
+                        max_tokens=max_tokens,
+                        repetition_penalty=repetition_penalty,
+                        verbose=False,
+                    )
+                else:
+                    raise
             
             generation_time = time.time() - start_time
             
