@@ -409,6 +409,7 @@ class ModelManager:
         self.configs: Dict[ModelTier, ModelConfig] = {}
         self._lock = Lock()
         self._loading: Dict[ModelTier, asyncio.Lock] = {}  # Async locks for model loading
+        self._mlx_locks: Dict[ModelTier, asyncio.Lock] = {}  # Locks for MLX model access
         
     async def initialize(self):
         """Initialize configurations without loading models (lazy loading)."""
@@ -419,6 +420,9 @@ class ModelManager:
             if config and Path(config.path).exists():
                 self.configs[tier] = config
                 self._loading[tier] = asyncio.Lock()  # Create async lock for each tier
+                # Create MLX lock if this is an MLX model
+                if config.backend == InferenceBackend.MLX:
+                    self._mlx_locks[tier] = asyncio.Lock()
                 configured_tiers += 1
                 logger.info(f"Configuration found for {tier.value} tier: {config.path}")
             else:
@@ -485,7 +489,13 @@ class ModelManager:
                 raise ValueError(f"No models available. Requested tier: {model_tier.value}")
                 
         model = self.models[model_tier]
-        return await model.generate(prompt, **kwargs)
+        
+        # For MLX models, serialize access to prevent Metal command buffer conflicts
+        if model_tier in self._mlx_locks:
+            async with self._mlx_locks[model_tier]:
+                return await model.generate(prompt, **kwargs)
+        else:
+            return await model.generate(prompt, **kwargs)
         
     async def generate_embedding(self, text: str, tier: ModelTier, 
                                 embedding_type: str = "dense", 

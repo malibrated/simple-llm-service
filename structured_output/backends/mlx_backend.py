@@ -29,6 +29,7 @@ class MLXBackend(StructuredBackend):
         self.model_manager = model_manager
         self._loaded_models = {}  # Cache loaded Outlines models
         self._generators = {}     # Cache compiled generators
+        self._generation_lock = None  # Will be set to the model manager's MLX lock
     
     async def generate(self, request: StructuredRequest) -> StructuredResponse:
         start_time = time.perf_counter()
@@ -37,6 +38,12 @@ class MLXBackend(StructuredBackend):
         model_path = request.model_config.get("path")
         if not model_path:
             raise ValueError("No model path provided for MLX backend")
+        
+        # Get the MLX lock from model manager if available
+        if self._generation_lock is None and hasattr(request, 'model_tier'):
+            # Try to get the lock from model manager
+            if request.model_tier in self.model_manager._mlx_locks:
+                self._generation_lock = self.model_manager._mlx_locks[request.model_tier]
         
         # Load and wrap model if not cached
         if model_path not in self._loaded_models:
@@ -83,8 +90,17 @@ class MLXBackend(StructuredBackend):
         logger.info(f"Generating with Outlines MLX backend, params: {gen_params}")
         
         try:
-            # Generate structured output
-            result = generator(request.prompt, **gen_params)
+            # Generate structured output with lock if available
+            if self._generation_lock:
+                # Use async lock to serialize MLX access
+                async with self._generation_lock:
+                    # Run generation in executor to avoid blocking
+                    import asyncio
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(None, generator, request.prompt, **gen_params)
+            else:
+                # No lock, run directly (backward compatibility)
+                result = generator(request.prompt, **gen_params)
             
             # The result is a Pydantic model instance
             if hasattr(result, 'model_dump'):

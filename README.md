@@ -255,6 +255,7 @@ CACHE_DIR=.cache/responses
 3. **Auto-shutdown**: Service shuts down after inactivity to save resources
 4. **GPU Acceleration**: Set `N_GPU_LAYERS=-1` to use all GPU layers
 5. **Thread Optimization**: Adjust `N_THREADS` based on your CPU cores
+6. **MLX Concurrency**: MLX models process requests sequentially to prevent crashes. For high concurrency, use llama.cpp backend
 
 ### Lazy Loading Behavior
 
@@ -328,18 +329,20 @@ When using both llama.cpp and MLX models, an OpenMP library conflict may occur.
 
 **Resolution**: Set the environment variable `KMP_DUPLICATE_LIB_OK=TRUE` before starting the service. This is automatically handled in `start_service.sh`.
 
-### MLX Metal Command Buffer Crash
+### MLX Metal Command Buffer Crash (Mitigated)
 
-MLX models may crash with Metal command buffer errors under certain conditions.
+MLX models may crash with Metal command buffer errors when accessed concurrently.
 
 **Issue**: `failed assertion 'A command encoder is already encoding to this command buffer'`
 
-**Workaround**: 
-- Avoid concurrent requests to MLX models
-- Use llama.cpp backend for production workloads requiring high concurrency
-- Restart the service if this error occurs
+**Resolution**: The service now serializes access to MLX models using async locks to prevent concurrent Metal operations. This ensures only one request uses an MLX model at a time.
 
-**Note**: This is an upstream MLX issue related to Metal GPU acceleration.
+**Performance Impact**: 
+- MLX requests are processed sequentially per model tier
+- This may reduce throughput but prevents crashes
+- For high-concurrency workloads, consider using llama.cpp backend
+
+**Note**: This is a workaround for an upstream MLX issue related to Metal GPU acceleration thread safety.
 
 ## License
 
