@@ -62,18 +62,27 @@ class ModelConfig:
     use_mlock: bool = False
     verbose: bool = False
     
+    @staticmethod
+    def _parse_env(key: str, default: str = "") -> str:
+        """Parse environment variable, stripping inline comments."""
+        value = os.getenv(key, default)
+        if '#' in value:
+            # Strip inline comments
+            value = value.split('#')[0].strip()
+        return value
+    
     @classmethod
     def from_env(cls, tier: ModelTier) -> Optional["ModelConfig"]:
         """Create model config from environment variables."""
         tier_upper = tier.value.upper()
         
         # Get model path
-        model_path = os.getenv(f"{tier_upper}_MODEL_PATH")
+        model_path = cls._parse_env(f"{tier_upper}_MODEL_PATH")
         if not model_path:
             return None
             
         # Determine backend from file extension or env var
-        backend_str = os.getenv(f"{tier_upper}_BACKEND", "").lower()
+        backend_str = cls._parse_env(f"{tier_upper}_BACKEND", "").lower()
         if backend_str == "mlx" or model_path.endswith(".mlx"):
             backend = InferenceBackend.MLX
         else:
@@ -84,19 +93,19 @@ class ModelConfig:
             path=model_path,
             tier=tier,
             backend=backend,
-            n_ctx=int(os.getenv(f"{tier_upper}_N_CTX", "8192")),
-            n_batch=int(os.getenv(f"{tier_upper}_N_BATCH", "512")),
-            n_threads=int(os.getenv(f"{tier_upper}_N_THREADS", os.cpu_count() or 8)),
-            n_gpu_layers=int(os.getenv(f"{tier_upper}_N_GPU_LAYERS", "-1")),
-            temperature=float(os.getenv(f"{tier_upper}_TEMPERATURE", "0.7")),
-            top_p=float(os.getenv(f"{tier_upper}_TOP_P", "0.95")),
-            top_k=int(os.getenv(f"{tier_upper}_TOP_K", "40")),
-            max_tokens=int(os.getenv(f"{tier_upper}_MAX_TOKENS", "1000")),
-            repeat_penalty=float(os.getenv(f"{tier_upper}_REPEAT_PENALTY", "1.1")),
-            use_mmap=os.getenv(f"{tier_upper}_USE_MMAP", "true").lower() == "true",
-            use_mlock=os.getenv(f"{tier_upper}_USE_MLOCK", "false").lower() == "true",
-            embedding_mode=os.getenv(f"{tier_upper}_EMBEDDING_MODE", "false").lower() == "true",
-            embedding_dimension=int(os.getenv(f"{tier_upper}_EMBEDDING_DIMENSION", "0")) or None,
+            n_ctx=int(cls._parse_env(f"{tier_upper}_N_CTX", "8192")),
+            n_batch=int(cls._parse_env(f"{tier_upper}_N_BATCH", "512")),
+            n_threads=int(cls._parse_env(f"{tier_upper}_N_THREADS", str(os.cpu_count() or 8))),
+            n_gpu_layers=int(cls._parse_env(f"{tier_upper}_N_GPU_LAYERS", "-1")),
+            temperature=float(cls._parse_env(f"{tier_upper}_TEMPERATURE", "0.7")),
+            top_p=float(cls._parse_env(f"{tier_upper}_TOP_P", "0.95")),
+            top_k=int(cls._parse_env(f"{tier_upper}_TOP_K", "40")),
+            max_tokens=int(cls._parse_env(f"{tier_upper}_MAX_TOKENS", "1000")),
+            repeat_penalty=float(cls._parse_env(f"{tier_upper}_REPEAT_PENALTY", "1.1")),
+            use_mmap=cls._parse_env(f"{tier_upper}_USE_MMAP", "true").lower() == "true",
+            use_mlock=cls._parse_env(f"{tier_upper}_USE_MLOCK", "false").lower() == "true",
+            embedding_mode=cls._parse_env(f"{tier_upper}_EMBEDDING_MODE", "false").lower() == "true",
+            embedding_dimension=int(cls._parse_env(f"{tier_upper}_EMBEDDING_DIMENSION", "0")) or None,
         )
 
 
@@ -362,23 +371,23 @@ class ModelManager:
         self.models: Dict[ModelTier, BaseModelWrapper] = {}
         self.configs: Dict[ModelTier, ModelConfig] = {}
         self._lock = Lock()
+        self._loading: Dict[ModelTier, asyncio.Lock] = {}  # Async locks for model loading
         
     async def initialize(self):
-        """Initialize models from configuration."""
-        tasks = []
+        """Initialize configurations without loading models (lazy loading)."""
+        configured_tiers = 0
         
         for tier in ModelTier:
             config = ModelConfig.from_env(tier)
             if config and Path(config.path).exists():
                 self.configs[tier] = config
-                tasks.append(self._load_model(tier, config))
+                self._loading[tier] = asyncio.Lock()  # Create async lock for each tier
+                configured_tiers += 1
+                logger.info(f"Configuration found for {tier.value} tier: {config.path}")
             else:
                 logger.warning(f"No valid configuration found for {tier.value} tier")
                 
-        if tasks:
-            await asyncio.gather(*tasks)
-            
-        logger.info(f"Initialized {len(self.models)} models")
+        logger.info(f"Lazy loading enabled for {configured_tiers} model configurations")
         
     async def _load_model(self, tier: ModelTier, config: ModelConfig):
         """Load a single model."""
@@ -399,13 +408,39 @@ class ModelManager:
                 
         except Exception as e:
             logger.error(f"Failed to load {tier.value} model: {e}")
+            raise
+    
+    async def _ensure_model_loaded(self, tier: ModelTier) -> bool:
+        """Ensure a model is loaded, loading it if necessary. Returns True if successful."""
+        # Quick check without lock
+        if tier in self.models:
+            return True
+            
+        # Check if configuration exists
+        if tier not in self.configs:
+            return False
+            
+        # Use async lock to prevent concurrent loading of the same model
+        async with self._loading[tier]:
+            # Double-check after acquiring lock
+            if tier in self.models:
+                return True
+                
+            logger.info(f"Lazy loading {tier.value} model on first use...")
+            try:
+                await self._load_model(tier, self.configs[tier])
+                return True
+            except Exception as e:
+                logger.error(f"Failed to lazy load {tier.value} model: {e}")
+                return False
             
     async def generate(self, model_tier: ModelTier, prompt: str, **kwargs) -> Dict[str, Any]:
         """Generate text using specified model tier."""
-        if model_tier not in self.models:
+        # Try to load the requested model
+        if not await self._ensure_model_loaded(model_tier):
             # Try to find an alternative tier
             for tier in [ModelTier.MEDIUM, ModelTier.LIGHT, ModelTier.HEAVY]:
-                if tier in self.models:
+                if await self._ensure_model_loaded(tier):
                     logger.warning(f"Model tier {model_tier.value} not available, using {tier.value}")
                     model_tier = tier
                     break
@@ -419,10 +454,11 @@ class ModelManager:
                                 embedding_type: str = "dense", 
                                 return_sparse: bool = False) -> Dict[str, Any]:
         """Generate embedding for the given text."""
-        if tier not in self.models:
+        # Try to load the requested model
+        if not await self._ensure_model_loaded(tier):
             # Try to find an alternative tier, preferring EMBEDDING tier
             for t in [ModelTier.EMBEDDING, ModelTier.LIGHT, ModelTier.MEDIUM, ModelTier.HEAVY]:
-                if t in self.models:
+                if await self._ensure_model_loaded(t):
                     logger.warning(f"Model tier {tier.value} not available for embeddings, using {t.value}")
                     tier = t
                     break
@@ -441,10 +477,11 @@ class ModelManager:
         
     async def rerank(self, query: str, documents: List[str], tier: ModelTier) -> List[float]:
         """Rerank documents based on query relevance."""
-        if tier not in self.models:
+        # Try to load the requested model
+        if not await self._ensure_model_loaded(tier):
             # Try to find an alternative tier, preferring RERANKER tier
             for t in [ModelTier.RERANKER, ModelTier.EMBEDDING, ModelTier.LIGHT]:
-                if t in self.models:
+                if await self._ensure_model_loaded(t):
                     logger.warning(f"Model tier {tier.value} not available for reranking, using {t.value}")
                     tier = t
                     break
@@ -468,21 +505,22 @@ class ModelManager:
                 raise NotImplementedError(f"Reranking not supported for {tier.value} model. Please configure a reranker model.")
         
     def get_available_models(self, tier: Optional[ModelTier] = None) -> List[str]:
-        """Get list of available model IDs."""
+        """Get list of available model IDs (configured models, not necessarily loaded)."""
         if tier:
-            if tier in self.models:
+            if tier in self.configs:
                 # Return model name based on path
                 config = self.configs[tier]
                 model_name = Path(config.path).stem
-                return [f"{tier.value}/{model_name}"]
+                loaded_suffix = " (loaded)" if tier in self.models else ""
+                return [f"{tier.value}/{model_name}{loaded_suffix}"]
             return []
             
-        # Return all available models
+        # Return all configured models
         models = []
-        for t, wrapper in self.models.items():
-            config = self.configs[t]
+        for t, config in self.configs.items():
             model_name = Path(config.path).stem
-            models.append(f"{t.value}/{model_name}")
+            loaded_suffix = " (loaded)" if t in self.models else ""
+            models.append(f"{t.value}/{model_name}{loaded_suffix}")
         return models
         
     def get_model_config(self, tier: ModelTier) -> Optional[ModelConfig]:

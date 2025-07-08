@@ -58,6 +58,7 @@ cp .env.example .env
 2. **model_manager.py**: Handles model loading and inference
    - Supports both llama.cpp and MLX backends
    - Five-tier model system (LIGHT, MEDIUM, HEAVY, EMBEDDING, RERANKER)
+   - Lazy loading: models are loaded on first use, not at startup
    - Async queue processing per tier
 
 3. **embedders.py**: Modular embedding implementations

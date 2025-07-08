@@ -201,7 +201,7 @@ class LLMService:
         """Initialize service on startup."""
         logger.info("Starting LLM Service...")
         
-        # Load models based on configuration
+        # Initialize model configurations (lazy loading enabled)
         await self.model_manager.initialize()
         
         # Start shutdown monitor

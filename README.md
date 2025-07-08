@@ -7,6 +7,7 @@ A lightweight, performant REST API service for Large Language Models with OpenAI
 - **OpenAI-Compatible API**: Drop-in replacement for OpenAI API endpoints
 - **Multi-Backend Support**: Works with both llama.cpp (.gguf) and MLX models
 - **Model Tiers**: Organize models into LIGHT, MEDIUM, and HEAVY categories
+- **Lazy Model Loading**: Models are loaded on-demand for faster startup times
 - **Configurable Parameters**: All LLM parameters configurable via environment variables
 - **Response Caching**: In-memory caching with optional disk persistence
 - **Auto-Shutdown**: Automatic service shutdown after inactivity period
@@ -204,11 +205,34 @@ CACHE_DIR=.cache/responses
 
 ## Performance Tips
 
-1. **Model Loading**: Models are loaded once at startup and kept in memory
+1. **Lazy Loading**: Models are loaded on first use, reducing startup time
 2. **Request Queuing**: Each tier has its own processing queue
 3. **Auto-shutdown**: Service shuts down after inactivity to save resources
 4. **GPU Acceleration**: Set `N_GPU_LAYERS=-1` to use all GPU layers
 5. **Thread Optimization**: Adjust `N_THREADS` based on your CPU cores
+
+### Lazy Loading Behavior
+
+The service implements lazy loading for all models:
+- **Fast Startup**: Service starts immediately without loading any models
+- **On-Demand Loading**: Models are loaded when first requested
+- **Memory Efficient**: Only models that are actually used consume memory
+- **Status Tracking**: The `/v1/models` endpoint shows which models are loaded
+
+Example startup behavior:
+```bash
+# Service starts instantly
+$ python server.py
+INFO: Lazy loading enabled for 3 model configurations
+INFO: LLM Service ready
+
+# First request to 'light' model triggers loading
+$ curl -X POST http://localhost:8000/v1/chat/completions -d '{"model": "light", ...}'
+INFO: Lazy loading light model on first use...
+INFO: Loaded light model in 2.45s
+
+# Subsequent requests use the loaded model immediately
+```
 
 ## Monitoring
 
