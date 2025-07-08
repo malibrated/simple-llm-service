@@ -13,6 +13,8 @@ A lightweight, performant REST API service for Large Language Models with OpenAI
 - **Auto-Shutdown**: Automatic service shutdown after inactivity period
 - **Langchain Compatible**: Works seamlessly with Langchain and Langgraph
 - **Structured Output**: Constrained JSON generation using GBNF (llama.cpp) and Outlines (MLX)
+- **Embeddings**: BGE-M3 support with dense/sparse embeddings
+- **Reranking**: Cross-encoder support for document reranking
 - **Async Architecture**: High-performance async request handling
 
 
@@ -31,6 +33,9 @@ pip install -r requirements.txt
 
 # For MLX support (macOS with Apple Silicon)
 pip install mlx mlx-lm
+
+# For structured output with MLX
+pip install outlines
 ```
 
 ## Configuration
@@ -92,6 +97,17 @@ response = requests.post(
         "max_tokens": 100
     }
 )
+
+# With structured output (returns clean JSON)
+response = requests.post(
+    "http://localhost:8000/v1/chat/completions",
+    json={
+        "model": "medium",
+        "messages": [{"role": "user", "content": "List 3 European capitals"}],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.1
+    }
+)
 ```
 
 #### Text Completions
@@ -149,25 +165,53 @@ graph = Graph()
 
 ## Advanced Features
 
-### Structured Output with JSON Grammar
+### Structured Output (JSON Generation)
+
+The service supports OpenAI-compatible structured output to ensure responses are valid JSON:
 
 ```python
+# Basic structured output
 response = requests.post(
     "http://localhost:8000/v1/chat/completions",
     json={
         "model": "medium",
-        "messages": [{"role": "user", "content": "Extract entities from: Apple Inc. was founded by Steve Jobs."}],
+        "messages": [{"role": "user", "content": "Generate a product listing with name, price, and description"}],
         "response_format": {"type": "json_object"},
-        "grammar": '''
-root ::= object
-object ::= "{" ws "\\"entities\\"" ws ":" ws array ws "}"
-array ::= "[" ws entity ("," ws entity)* ws "]"
-entity ::= "{" ws "\\"name\\"" ws ":" ws string ws "," ws "\\"type\\"" ws ":" ws string ws "}"
-string ::= "\\"" ([^"\\\\] | "\\\\" .)* "\\""
-ws ::= [ \\t\\n]*
-'''
+        "temperature": 0.1  # Lower temperature for consistent structure
     }
 )
+
+# Response will be clean JSON without markdown formatting:
+# {"name": "Wireless Mouse", "price": 29.99, "description": "Ergonomic design..."}
+```
+
+#### How It Works
+
+- **llama.cpp backend**: Uses GBNF (GGML BNF) grammars for constrained generation
+- **MLX backend**: Uses the Outlines library with Pydantic models
+- **Automatic conversion**: The service automatically handles format conversion based on the backend
+- **Clean output**: No markdown wrapping or formatting - just valid JSON
+
+#### Client Examples
+
+See the [structured output client guide](docs/structured_output_client_guide.md) for detailed examples in Python, JavaScript, and cURL.
+
+#### Python Client Example
+
+```python
+from examples.structured_output_client import StructuredLLMClient
+
+client = StructuredLLMClient()
+
+# Extract entities from text
+entities = await client.extract_entities(
+    "Apple Inc. announced that Tim Cook will visit Tokyo next month."
+)
+# Output: {"people": ["Tim Cook"], "organizations": ["Apple Inc."], "locations": ["Tokyo"], ...}
+
+# Generate structured data
+product = await client.generate_product("laptop")
+# Output: {"name": "UltraBook Pro", "price": 1299.99, "features": [...], ...}
 ```
 
 ### Model-Specific Parameters
@@ -275,6 +319,27 @@ MLX-LM requires temperature and sampling parameters to be passed via a sampler o
 **Resolution**: We now properly create a sampler using `mlx_lm.sample_utils.make_sampler()` with the provided temperature, top_p, and top_k parameters.
 
 **Current Status**: MLX models now fully support temperature and sampling parameters.
+
+### OpenMP Conflict (Resolved)
+
+When using both llama.cpp and MLX models, an OpenMP library conflict may occur.
+
+**Issue**: `OMP: Error #15: Initializing libomp.dylib, but found libomp.dylib already initialized`
+
+**Resolution**: Set the environment variable `KMP_DUPLICATE_LIB_OK=TRUE` before starting the service. This is automatically handled in `start_service.sh`.
+
+### MLX Metal Command Buffer Crash
+
+MLX models may crash with Metal command buffer errors under certain conditions.
+
+**Issue**: `failed assertion 'A command encoder is already encoding to this command buffer'`
+
+**Workaround**: 
+- Avoid concurrent requests to MLX models
+- Use llama.cpp backend for production workloads requiring high concurrency
+- Restart the service if this error occurs
+
+**Note**: This is an upstream MLX issue related to Metal GPU acceleration.
 
 ## License
 
