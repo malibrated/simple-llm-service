@@ -12,7 +12,7 @@ A lightweight, performant REST API service for Large Language Models with OpenAI
 - **Response Caching**: In-memory caching with optional disk persistence
 - **Auto-Shutdown**: Automatic service shutdown after inactivity period
 - **Langchain Compatible**: Works seamlessly with Langchain and Langgraph
-- **Structured Output**: Support for JSON grammars and structured generation
+- **Structured Output**: Constrained JSON generation using GBNF (llama.cpp) and Outlines (MLX)
 - **Async Architecture**: High-performance async request handling
 
 

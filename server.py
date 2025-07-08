@@ -3,6 +3,10 @@
 LLM Service with OpenAI-compatible REST API.
 Supports both llama.cpp and MLX models with configurable parameters.
 """
+import os
+# Fix for OpenMP conflict when using both llama.cpp and MLX models
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
 import asyncio
 import json
 import logging
@@ -46,6 +50,7 @@ logger = logging.getLogger(__name__)
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
+    refusal: Optional[str] = None  # For structured output refusals (OpenAI compatibility)
 
 
 class ChatCompletionRequest(BaseModel):
@@ -283,13 +288,65 @@ class LLMService:
         }
         
         # Handle grammar/structured output
-        if request.grammar:
-            generation_params["grammar"] = request.grammar
-        elif request.response_format and request.response_format.get("type") == "json_object":
-            # Convert to appropriate grammar for JSON output
-            generation_params["grammar"] = self._get_json_grammar()
+        if request.response_format:
+            format_type = request.response_format.get("type")
             
-        # Generate response
+            if format_type in ["json_schema", "gbnf_grammar", "regex"]:
+                # Use structured generation for advanced formats
+                try:
+                    result = await self.model_manager.generate_structured(
+                        prompt=prompt,
+                        response_format=request.response_format,
+                        model_tier=model_tier,
+                        **generation_params
+                    )
+                except ValueError as e:
+                    # Validation errors should return 400
+                    logger.warning(f"Structured generation validation error: {e}")
+                    raise HTTPException(status_code=400, detail=str(e))
+                except Exception as e:
+                    logger.error(f"Structured generation failed: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    raise
+                
+                # Extract the text content for the response
+                generated_text = result["content"]
+                
+                # Build response with structured output
+                response = ChatCompletionResponse(
+                    model=request.model,
+                    choices=[
+                        Choice(
+                            index=0,
+                            message=ChatMessage(role="assistant", content=generated_text),
+                            finish_reason="stop"
+                        )
+                    ],
+                    usage=Usage(
+                        prompt_tokens=len(prompt.split()),  # Estimate
+                        completion_tokens=len(generated_text.split()),  # Estimate
+                        total_tokens=len(prompt.split()) + len(generated_text.split())
+                    )
+                )
+                
+                # Add refusal if present (OpenAI compatibility)
+                if result.get("refusal"):
+                    response.choices[0].message.refusal = result["refusal"]
+                
+                # Cache response
+                self.cache.set(cache_key, response.dict())
+                return response
+                
+            elif format_type == "json_object":
+                # Use basic JSON grammar for backward compatibility
+                generation_params["grammar"] = self._get_json_grammar()
+                
+        elif request.grammar:
+            # Direct grammar specification (backward compatibility)
+            generation_params["grammar"] = request.grammar
+            
+        # Generate response using standard generation
         try:
             result = await self.model_manager.generate(
                 model_tier=model_tier,
@@ -554,7 +611,7 @@ class LLMService:
         # Default mappings based on model size
         if any(x in model_name_lower for x in ["0.5b", "1b", "tiny", "small"]):
             return ModelTier.LIGHT
-        elif any(x in model_name_lower for x in ["3b", "4b", "7b", "medium"]):
+        elif any(x in model_name_lower for x in ["3b", "4b", "7b", "8b", "medium"]):
             return ModelTier.MEDIUM
         elif any(x in model_name_lower for x in ["13b", "24b", "70b", "large", "heavy"]):
             return ModelTier.HEAVY

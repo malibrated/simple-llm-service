@@ -568,5 +568,62 @@ class ModelManager:
         """Cleanup all models."""
         for wrapper in self.models.values():
             wrapper.cleanup()
-        self.models.clear()
-        self.configs.clear()
+    
+    async def generate_structured(self, 
+                                prompt: str,
+                                response_format: Dict[str, Any],
+                                model_tier: ModelTier,
+                                **kwargs) -> Dict[str, Any]:
+        """
+        Generate text with structured output constraints.
+        
+        Args:
+            prompt: The prompt to generate from
+            response_format: The response format specification (JSON Schema, GBNF, etc.)
+            model_tier: The model tier to use
+            **kwargs: Additional generation parameters
+            
+        Returns:
+            Dict with 'content', 'parsed', 'processing_time_ms', 'backend_used'
+        """
+        try:
+            # Lazy import to avoid circular dependency
+            import sys
+            import os
+            # Ensure current directory is in path
+            if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
+                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            
+            from structured_output import UnifiedStructuredGenerator
+            
+            # Initialize structured generator if needed
+            if not hasattr(self, '_structured_generator'):
+                self._structured_generator = UnifiedStructuredGenerator(self)
+            
+            # Ensure model is loaded
+            if not await self._ensure_model_loaded(model_tier):
+                raise ValueError(f"Model tier {model_tier.value} not available")
+            
+            # Generate structured output
+            result = await self._structured_generator.generate(
+                prompt=prompt,
+                response_format=response_format,
+                model_tier=model_tier,
+                **kwargs
+            )
+            
+            return {
+                "content": result.content,
+                "parsed": result.parsed_result,
+                "processing_time_ms": result.processing_time_ms,
+                "backend_used": result.backend_used,
+                "refusal": result.refusal
+            }
+        except ImportError as e:
+            logger.error(f"Failed to import structured output module: {e}")
+            raise RuntimeError(f"Structured output module not available: {e}")
+        except Exception as e:
+            logger.error(f"Structured generation error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise

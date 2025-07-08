@@ -33,6 +33,10 @@ fi
 # Get port from .env file, default to 8000 if not found
 PORT=$(grep "^PORT=" .env 2>/dev/null | cut -d'=' -f2 || echo "8000")
 
+# Fix for OpenMP conflict between llama.cpp and MLX
+# This prevents crashes when loading both types of models
+export KMP_DUPLICATE_LIB_OK=TRUE
+
 # Start the service
 echo "Starting LLM Service..."
 echo "Service will be available at http://localhost:${PORT}"
