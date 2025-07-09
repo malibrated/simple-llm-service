@@ -250,14 +250,17 @@ class MLXWrapper(BaseModelWrapper):
             import mlx.core as mx
             from mlx_lm import load
             
-            logger.info(f"Loading MLX model from {self.config.path}")
+            logger.info(f"[TRACE] MLXWrapper.initialize() called for {self.config.tier.value}")
+            logger.info(f"[TRACE] Loading MLX model from {self.config.path}")
             start_time = time.time()
             
             # Load model and tokenizer
             self.model, self.tokenizer = load(self.config.path)
+            logger.info(f"[TRACE] MLX model object: {id(self.model)}")
+            logger.info(f"[TRACE] MLX tokenizer object: {id(self.tokenizer)}")
             
             load_time = time.time() - start_time
-            logger.info(f"Loaded {self.config.tier.value} MLX model in {load_time:.2f}s")
+            logger.info(f"[TRACE] Loaded {self.config.tier.value} MLX model in {load_time:.2f}s")
             
             # Create a wrapper for generate that properly handles parameters
             def generate_wrapper(model, tokenizer, prompt, **kwargs):
@@ -432,20 +435,24 @@ class ModelManager:
         
     async def _load_model(self, tier: ModelTier, config: ModelConfig):
         """Load a single model."""
+        logger.info(f"[TRACE] _load_model called for {tier.value} with backend {config.backend}")
         try:
             # Create appropriate wrapper
             if config.backend == InferenceBackend.LLAMACPP:
                 wrapper = LlamaCppWrapper(config)
             elif config.backend == InferenceBackend.MLX:
+                logger.info(f"[TRACE] Creating MLXWrapper for {tier.value}")
                 wrapper = MLXWrapper(config)
             else:
                 raise ValueError(f"Unknown backend: {config.backend}")
                 
             # Initialize model
+            logger.info(f"[TRACE] Initializing {tier.value} model wrapper")
             await wrapper.initialize()
             
             with self._lock:
                 self.models[tier] = wrapper
+                logger.info(f"[TRACE] Stored {tier.value} model in models dict")
                 
         except Exception as e:
             logger.error(f"Failed to load {tier.value} model: {e}")

@@ -293,6 +293,7 @@ class LLMService:
             
             if format_type in ["json_schema", "gbnf_grammar", "regex", "json_object"]:
                 # Use structured generation for all structured formats including json_object
+                logger.info(f"[TRACE] Using structured generation for {format_type} with model tier {model_tier.value}")
                 try:
                     result = await self.model_manager.generate_structured(
                         prompt=prompt,
@@ -704,6 +705,46 @@ app.state.service = service
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.get("/debug/structured")
+async def debug_structured():
+    """Debug structured output availability."""
+    debug_info = {
+        "structured_output_available": False,
+        "error": None,
+        "models": {}
+    }
+    
+    try:
+        import sys
+        import os
+        if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        
+        from structured_output import UnifiedStructuredGenerator
+        debug_info["structured_output_available"] = True
+        
+        # Check if model manager has structured generator
+        if hasattr(model_manager, '_structured_generator'):
+            debug_info["has_structured_generator"] = True
+        else:
+            debug_info["has_structured_generator"] = False
+            
+        # Check loaded models
+        for tier in model_manager.models:
+            debug_info["models"][tier.value] = {
+                "loaded": True,
+                "type": type(model_manager.models[tier]).__name__,
+                "backend": model_manager.models[tier].config.backend.value
+            }
+            
+    except Exception as e:
+        debug_info["error"] = str(e)
+        import traceback
+        debug_info["traceback"] = traceback.format_exc()
+        
+    return debug_info
 
 
 @app.get("/v1/models", response_model=ModelsResponse)
