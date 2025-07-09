@@ -2,6 +2,8 @@
 
 A lightweight, performant REST API service for Large Language Models with OpenAI-compatible endpoints. Supports both llama.cpp (GGUF) and Apple MLX models with configurable parameters and intelligent caching.
 
+📚 **[Full API Reference](docs/API_REFERENCE.md)** | 🚀 **[Quick Start](#quick-start)** | 💡 **[Examples](examples/)** | 📋 **[Quick Reference](docs/QUICK_REFERENCE.md)**
+
 ## Features
 
 - **OpenAI-Compatible API**: Drop-in replacement for OpenAI API endpoints
@@ -18,17 +20,21 @@ A lightweight, performant REST API service for Large Language Models with OpenAI
 - **Async Architecture**: High-performance async request handling
 
 
-## Installation
+## Quick Start
+
+### Installation
 
 ```bash
 # Clone the repository
-cd /Users/patrickpark/Documents/Work/utils/llmservice
+git clone https://github.com/yourusername/llm-service.git
+cd llm-service
 
-# Create and activate virtual environment
+# Run the setup script (creates venv and installs dependencies)
+./setup.sh
+
+# Or manually:
 python3 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
 pip install -r requirements.txt
 
 # For MLX support (macOS with Apple Silicon)
@@ -69,63 +75,86 @@ HEAVY_MAX_TOKENS=4096
 ### Starting the Service
 
 ```bash
-# Run directly
-python server.py
+# Recommended: Use the startup script
+./start_service.sh
 
-# Or with uvicorn for development
-uvicorn server:app --reload
+# The service will:
+# - Auto-select an available port
+# - Write the port to .port file for discovery
+# - Handle virtual environment activation
+# - Set up required environment variables
+
+# Or run manually:
+python server.py
 
 # Custom host/port
 PORT=8080 HOST=127.0.0.1 python server.py
 ```
 
-### API Endpoints
+### Port Discovery
 
-#### Chat Completions (OpenAI Compatible)
+The service writes its port to `.port` file for easy discovery:
+
 ```python
-import requests
+# Python
+from pathlib import Path
+port = int(Path(".port").read_text().strip())
+base_url = f"http://localhost:{port}"
 
-response = requests.post(
-    "http://localhost:8000/v1/chat/completions",
-    json={
-        "model": "medium",  # or "light", "heavy", or specific model name
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "What is the capital of France?"}
-        ],
-        "temperature": 0.7,
-        "max_tokens": 100
-    }
-)
-
-# With structured output (returns clean JSON)
-response = requests.post(
-    "http://localhost:8000/v1/chat/completions",
-    json={
-        "model": "medium",
-        "messages": [{"role": "user", "content": "List 3 European capitals"}],
-        "response_format": {"type": "json_object"},
-        "temperature": 0.1
-    }
-)
+# Bash
+PORT=$(cat .port)
+curl http://localhost:$PORT/v1/models
 ```
 
-#### Text Completions
-```python
-response = requests.post(
-    "http://localhost:8000/v1/completions",
-    json={
-        "model": "light",
-        "prompt": "The capital of France is",
-        "max_tokens": 50,
-        "temperature": 0.1
-    }
-)
-```
+### API Overview
 
-#### List Available Models
+The service provides OpenAI-compatible endpoints. See the **[Full API Reference](docs/API_REFERENCE.md)** for detailed documentation.
+
+#### Available Endpoints
+
+- `GET /health` - Health check
+- `GET /v1/models` - List available models
+- `POST /v1/chat/completions` - Chat completions (streaming supported)
+- `POST /v1/completions` - Text completions (legacy)
+- `POST /v1/embeddings` - Generate embeddings (BGE-M3 support)
+- `POST /v1/rerank` - Rerank documents
+
+#### Quick Example
+
 ```python
-response = requests.get("http://localhost:8000/v1/models")
+import httpx
+import asyncio
+
+async def example():
+    # Discover service port
+    with open(".port", "r") as f:
+        port = int(f.read().strip())
+    
+    async with httpx.AsyncClient() as client:
+        # Chat completion
+        response = await client.post(
+            f"http://localhost:{port}/v1/chat/completions",
+            json={
+                "model": "medium",
+                "messages": [{"role": "user", "content": "Hello!"}],
+                "temperature": 0.7
+            }
+        )
+        print(response.json()["choices"][0]["message"]["content"])
+
+        # Structured output (JSON)
+        response = await client.post(
+            f"http://localhost:{port}/v1/chat/completions",
+            json={
+                "model": "medium",
+                "messages": [{"role": "user", "content": "List 3 colors"}],
+                "response_format": {"type": "json_object"},
+                "temperature": 0.1
+            }
+        )
+        print(response.json()["choices"][0]["message"]["content"])
+
+asyncio.run(example())
 ```
 
 ### Using with Langchain
