@@ -291,8 +291,8 @@ class LLMService:
         if request.response_format:
             format_type = request.response_format.get("type")
             
-            if format_type in ["json_schema", "gbnf_grammar", "regex"]:
-                # Use structured generation for advanced formats
+            if format_type in ["json_schema", "gbnf_grammar", "regex", "json_object"]:
+                # Use structured generation for all structured formats including json_object
                 try:
                     result = await self.model_manager.generate_structured(
                         prompt=prompt,
@@ -337,10 +337,6 @@ class LLMService:
                 # Cache response
                 self.cache.set(cache_key, response.dict())
                 return response
-                
-            elif format_type == "json_object":
-                # Use basic JSON grammar for backward compatibility
-                generation_params["grammar"] = self._get_json_grammar()
                 
         elif request.grammar:
             # Direct grammar specification (backward compatibility)
