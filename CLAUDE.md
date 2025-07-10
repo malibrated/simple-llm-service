@@ -144,3 +144,17 @@ RERANKER_TEMPERATURE=0.01
 - Type hints used throughout via Pydantic models
 - Logging configured via Python's logging module
 - CORS enabled by default for browser-based applications
+
+## Structured Output Implementation
+
+### MLX Backend with Outlines
+The structured output feature for MLX models uses the Outlines library for constrained JSON generation:
+- Integrated via `outlines.models.from_mlxlm()` to wrap MLX models
+- Uses `outlines.generate.json()` with flexible schema for JSON object generation
+- Ensures valid JSON output every time (no more parsing errors)
+- Falls back to prompt-based generation if Outlines fails
+
+### Important Notes
+1. **Model Path Configuration**: Ensure MEDIUM_MODEL_PATH points to the actual MLX model directory (e.g., `/path/to/mlx-community/gemma-3-4b-it-qat-4bit`), not just metadata
+2. **Clear Prompts Required**: When using `response_format: {"type": "json_object"}`, be explicit about the JSON structure you want
+3. **Empty JSON on Vague Prompts**: The model may return `{}` if the prompt doesn't clearly specify what fields to include

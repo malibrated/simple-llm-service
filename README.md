@@ -217,9 +217,27 @@ response = requests.post(
 #### How It Works
 
 - **llama.cpp backend**: Uses GBNF (GGML BNF) grammars for constrained generation
-- **MLX backend**: Uses the Outlines library with Pydantic models
+- **MLX backend**: Uses the Outlines library for constrained JSON generation
+  - Properly integrated with `outlines.models.from_mlxlm()` for MLX models
+  - Ensures valid JSON output through schema-based generation
+  - Falls back to prompted generation if Outlines fails
 - **Automatic conversion**: The service automatically handles format conversion based on the backend
 - **Clean output**: No markdown wrapping or formatting - just valid JSON
+
+#### Important Notes for Structured Output
+
+When using `response_format: {"type": "json_object"}`, ensure your prompts are specific about the desired JSON structure:
+
+**Good prompts:**
+- "Generate a JSON object with name (string) and age (number) fields"
+- "Create JSON with fields: title, price, description"
+- "Return a user object with email and username properties"
+
+**Vague prompts may result in empty JSON:**
+- "Generate a person" → `{}`
+- "Make some data" → `{}`
+
+The service enforces valid JSON but doesn't guess structure - be explicit about what fields you want.
 
 #### Client Examples
 

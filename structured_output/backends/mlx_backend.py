@@ -18,10 +18,21 @@ except ImportError as e:
     mlx_generate = None
     make_sampler = None
 
+try:
+    import outlines
+    from outlines import models, generate
+    OUTLINES_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Failed to import Outlines: {e}")
+    OUTLINES_AVAILABLE = False
+    outlines = None
+    models = None
+    generate = None
+
 from ..interfaces import StructuredBackend, StructuredRequest, StructuredResponse
 
 # Export OUTLINES_MLX_AVAILABLE for compatibility
-OUTLINES_MLX_AVAILABLE = MLX_AVAILABLE
+OUTLINES_MLX_AVAILABLE = MLX_AVAILABLE and OUTLINES_AVAILABLE
 
 
 class MLXBackend(StructuredBackend):
@@ -30,55 +41,84 @@ class MLXBackend(StructuredBackend):
     def __init__(self, model_manager):
         if not MLX_AVAILABLE:
             raise ImportError("MLX support not available. Install with: pip install mlx-lm")
+        if not OUTLINES_AVAILABLE:
+            raise ImportError("Outlines not available. Install with: pip install outlines")
         
         self.model_manager = model_manager
         self._generation_lock = None  # Will be set to the model manager's MLX lock
+        self._outlines_models = {}  # Cache for Outlines model wrappers
     
-    def generate_sync(self, prompt: str, model_wrapper, **kwargs) -> str:
-        """Synchronous generation helper to avoid nested async issues."""
-        logger.info(f"[TRACE] generate_sync called with kwargs: {list(kwargs.keys())}")
+    def _get_or_create_outlines_model(self, model_wrapper):
+        """Get or create an Outlines model wrapper for the MLX model."""
+        model_id = id(model_wrapper)
         
-        # If prompt ends with "Assistant:", we need to add JSON instruction right after it
-        if prompt.endswith("Assistant:"):
-            json_prompt = prompt + " " + "{"
-        else:
-            # Build JSON prompt
-            json_prompt = f"""{prompt}
-
-Respond with valid JSON only. Start with {{ and end with }}. No markdown or backticks."""
+        if model_id not in self._outlines_models:
+            # Create Outlines model from MLX model
+            logger.info("[TRACE] Creating Outlines wrapper for MLX model")
+            self._outlines_models[model_id] = models.from_mlxlm(model_wrapper.model, model_wrapper.tokenizer)
+            logger.info("[TRACE] Outlines wrapper created successfully")
         
-        # Use the model wrapper's synchronous generate internals
-        if hasattr(model_wrapper, 'model') and hasattr(model_wrapper, 'tokenizer'):
-            # This is an MLXWrapper, use its internal generate method
+        return self._outlines_models[model_id]
+    
+    def generate_sync(self, prompt: str, model_wrapper, response_format: dict, **kwargs) -> str:
+        """Synchronous generation using Outlines for constrained JSON."""
+        logger.info(f"[TRACE] generate_sync called with response_format: {response_format}")
+        
+        # Get or create the Outlines model wrapper
+        outlines_model = self._get_or_create_outlines_model(model_wrapper)
+        
+        # For json_object format, use Outlines JSON generation
+        if response_format.get("type") == "json_object":
+            logger.info("[TRACE] Using Outlines JSON generation")
             
-            # Extract parameters
-            temp = kwargs.get('temperature', 0.1)
-            max_tokens = kwargs.get('max_tokens', 200)
-            top_p = kwargs.get('top_p', 0.95)
-            top_k = kwargs.get('top_k', 0)
+            # Add a helpful hint about JSON generation if not already present
+            if "json" not in prompt.lower() and "Assistant:" in prompt:
+                prompt = prompt.replace("Assistant:", "Assistant: I'll generate the requested data as a JSON object.")
+            elif "json" not in prompt.lower():
+                prompt += "\n\nGenerate the requested data as a JSON object."
             
-            # Create sampler
-            sampler = make_sampler(temp=temp, top_p=top_p, top_k=top_k)
+            # Create a generic JSON schema that accepts any valid JSON object
+            # Using a simple schema that allows flexible JSON structure
+            schema = {
+                "type": "object",
+                "additionalProperties": True  # Allow any properties
+            }
             
-            # Generate directly
-            response = mlx_generate(
-                model_wrapper.model,
-                model_wrapper.tokenizer,
-                json_prompt,
-                max_tokens=max_tokens,
-                sampler=sampler,
-                verbose=False
-            )
-            
-            # Extract JSON from markdown if needed
-            import re
-            json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response, re.DOTALL)
-            if json_match:
-                response = json_match.group(1).strip()
-            
-            return response
+            # Create JSON generator
+            try:
+                json_generator = generate.json(outlines_model, schema)
+                logger.info("[TRACE] Created Outlines JSON generator")
+                
+                # Generate with the constrained generator
+                response = json_generator(prompt)
+                logger.info(f"[TRACE] Outlines generated: {str(response)[:200]}...")
+                
+                # Convert to JSON string if it's a dict
+                if isinstance(response, dict):
+                    return json.dumps(response)
+                return str(response)
+                
+            except Exception as e:
+                logger.error(f"[TRACE] Outlines generation failed: {e}")
+                # Fall back to basic generation
+                logger.info("[TRACE] Falling back to basic MLX generation")
+                
+                # Add JSON instruction to prompt
+                json_prompt = f"{prompt}\n\nRespond with valid JSON only:"
+                
+                # Use basic MLX generation
+                temp = kwargs.get('temperature', 0.1)
+                max_tokens = kwargs.get('max_tokens', 2048)
+                
+                response = outlines_model.generate(
+                    json_prompt,
+                    max_tokens=max_tokens,
+                    temperature=temp
+                )
+                
+                return response
         else:
-            raise ValueError("Invalid model wrapper for MLX generation")
+            raise ValueError(f"Unsupported response format type: {response_format.get('type')}")
     
     async def generate(self, request: StructuredRequest) -> StructuredResponse:
         start_time = time.perf_counter()
@@ -126,7 +166,7 @@ Respond with valid JSON only. Start with {{ and end with }}. No markdown or back
                     # Create a wrapper function that takes no arguments
                     logger.info(f"[TRACE] Creating wrapper function with gen_params: {list(all_gen_params.keys())}")
                     def sync_wrapper():
-                        return self.generate_sync(request.prompt, model_wrapper, **all_gen_params)
+                        return self.generate_sync(request.prompt, model_wrapper, request.response_format, **all_gen_params)
                     
                     logger.info(f"[TRACE] Calling run_in_executor with sync_wrapper")
                     result = await loop.run_in_executor(None, sync_wrapper)
@@ -134,7 +174,7 @@ Respond with valid JSON only. Start with {{ and end with }}. No markdown or back
             else:
                 # No lock, run directly
                 logger.info("[TRACE] No lock, calling generate_sync directly")
-                result = self.generate_sync(request.prompt, model_wrapper, **all_gen_params)
+                result = self.generate_sync(request.prompt, model_wrapper, request.response_format, **all_gen_params)
             
             # Handle different result types
             if isinstance(result, str):
@@ -149,11 +189,44 @@ Respond with valid JSON only. Start with {{ and end with }}. No markdown or back
                 
                 # Try to parse the content as JSON
                 try:
-                    parsed_result = json.loads(content)
+                    # First, try to fix common JSON issues
+                    content_cleaned = content.strip()
+                    
+                    # Replace smart quotes with regular quotes
+                    content_cleaned = content_cleaned.replace('"', '"').replace('"', '"').replace(''', "'").replace(''', "'")
+                    
+                    # If it doesn't start with {, try to add it
+                    if not content_cleaned.startswith('{'):
+                        # Check if it looks like JSON content without the opening brace
+                        if content_cleaned.strip().startswith('"') or 'name' in content_cleaned[:50]:
+                            content_cleaned = '{' + content_cleaned
+                        else:
+                            # Find the first { if there is one
+                            brace_idx = content_cleaned.find('{')
+                            if brace_idx != -1:
+                                content_cleaned = content_cleaned[brace_idx:]
+                    
+                    # If it's incomplete (doesn't end with }), try to complete it
+                    if content_cleaned and not content_cleaned.rstrip().endswith('}'):
+                        # Count braces to see how many we need
+                        open_braces = content_cleaned.count('{')
+                        close_braces = content_cleaned.count('}')
+                        missing_braces = open_braces - close_braces
+                        
+                        # Add missing quotes if needed
+                        if content_cleaned.rstrip().endswith('"'):
+                            content_cleaned += '}' * missing_braces
+                        else:
+                            # Try to close any open string
+                            if '"' in content_cleaned and not content_cleaned.rstrip().endswith('"'):
+                                content_cleaned += '"'
+                            content_cleaned += '}' * missing_braces
+                    
+                    parsed_result = json.loads(content_cleaned)
                     content = json.dumps(parsed_result)  # Normalize
-                except json.JSONDecodeError:
-                    # If we can't parse it, return a simple object
-                    logger.warning(f"Could not parse JSON from MLX response: {content[:100]}")
+                except json.JSONDecodeError as e:
+                    # If we still can't parse it, return a simple object
+                    logger.warning(f"Could not parse JSON from MLX response: {content[:200]}... Error: {e}")
                     parsed_result = {"error": "Failed to generate valid JSON", "raw": content}
                     content = json.dumps(parsed_result)
             elif hasattr(result, 'model_dump'):
